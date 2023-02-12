@@ -1,0 +1,74 @@
+-- PROCEDURE: clt_tran.sail_point_create_user(character varying, character varying, character varying, character varying, character varying, character varying, text[], character varying, character varying, character varying, character varying, integer, text) -- DROP PROCEDURE IF EXISTS clt_tran.sail_point_create_user(character varying, character varying, character varying, character varying, character varying, character varying, text[], character varying, character varying, character varying, character varying, integer, text); CREATE OR REPLACE PROCEDURE clt_tran.sail_point_create_user(
+    p_first_name character varying,
+    p_last_name character varying,
+    p_login_name character varying,
+    p_login_password character varying,
+    p_email_id character varying,
+    p_mobile_no character varying,
+    p_role_code text[],
+    p_app_code character varying,
+    p_tenant_code character varying,
+    p_system_code character varying,
+    p_app_sts_id character varying,
+    p_role_length integer,
+    INOUT _result text DEFAULT NULL::text)
+LANGUAGE 'plpgsql'
+AS $BODY$
+DECLARE
+v_cluster_code text;
+v_user_id integer;
+v_user_existes integer;
+v_app_user_id integer;
+v_app_id text;
+v_app_user_sts integer;
+v_child_s_id text;
+v_app_code_count integer;
+v_role_code text[] := p_role_code;
+v_individual_role text;
+v_user_role integer;
+v_appr_id text; BEGIN
+    select count(*) into v_user_existes from clt_tran.users where login_name =p_login_name;
+    if v_user_existes>=1
+        Then
+            _result = '903';
+            return;
+        end if;
+    UPDATE clt_tran.fx_total_items SET counter_value = counter_value + 1 WHERE code = 'USERS';
+    SELECT max(counter_value) into v_user_id  from clt_tran.fx_total_items where code = 'USERS';
+    INSERT INTO clt_tran.users (login_name,client_id,u_id,created_by,created_date,double_authentication,first_name,last_name,login_password,status,TENANT_ID, email_id, mobile_no)
+    Select p_login_name,'1304',v_user_id,'1',current_timestamp,'N',p_first_name, p_last_name,
+    p_login_password,'ACTIVE',p_tenant_code, p_email_id, p_mobile_no;
+    UPDATE clt_tran.fx_total_items SET counter_value = counter_value + 1 WHERE code = 'APP_USERS';
+    Select max(counter_value) INTO v_app_user_id  from clt_tran.fx_total_items where code = 'APP_USERS';
+    select app_id into v_app_id from clt_tran.applications where app_code = p_app_code;
+    select count(*) into v_app_code_count from clt_tran.applications where app_code = p_app_code;
+    if v_app_id is null 
+    Then
+        _result = '902';
+        return;
+    end if;
+    INSERT INTO clt_tran.app_users(u_id, app_id, appu_id, created_by, created_date) 
+    SELECT v_user_id, v_app_id, v_app_user_id, '1', current_timestamp from clt_tran.users 
+    where login_name = p_login_name;
+    UPDATE clt_tran.fx_total_items SET counter_value = counter_value + 1 WHERE code = 'APP_USER_STS';
+    SELECT max(counter_value) INTO v_app_user_sts from clt_tran.fx_total_items WHERE code = 'APP_USER_STS';
+    SELECT cluster_code, child_s_id into v_cluster_code, v_child_s_id from clt_tran.app_system_to_system where app_id = v_app_id;
+    INSERT INTO clt_tran.app_user_sts(appu_id,appusts_id , appsts_id, created_by, created_date) 
+    SELECT au.appu_id, v_app_user_sts,
+    ast.appsts_id, '1', current_timestamp from clt_tran.users u
+    INNER JOIN clt_tran.app_users au on au.u_id = u.u_id
+    INNER JOIN clt_tran.app_system_to_system ast on ast.app_id = au.app_id
+    where u.login_name = p_login_name AND au.app_id = v_app_id AND ast.cluster_code = v_cluster_code and child_s_id=v_child_s_id;
+    for indexs in 1..p_role_length loop
+    select appr_id into v_appr_id from clt_tran.app_roles where role_code=p_role_code[indexs] and app_id = v_app_id;
+        UPDATE clt_tran.fx_total_items SET counter_value = counter_value + 1 WHERE code = 'APP_USER_ROLES';
+        INSERT INTO clt_tran.app_user_roles(appu_id, appur_id, appr_id, created_by, created_date)
+        SELECT au.appu_id, (Select max(counter_value)  from clt_tran.fx_total_items where code = 'APP_USER_ROLES'), v_appr_id, '1', current_timestamp  FROM clt_tran.app_roles ar 
+        INNER JOIN clt_tran.app_users au ON ar.app_id = au.app_id
+        INNER JOIN clt_tran.users u on u.u_id = au.u_id 
+        where ar.role_code = p_role_code[indexs] AND ar.app_id = v_app_id AND 
+        u.login_name = p_login_name;       end loop ;
+    _result ='000';
+    return; END
+$BODY$; ALTER PROCEDURE clt_tran.sail_point_create_user(character varying, character varying, character varying, character varying, character varying, character varying, text[], character varying, character varying, character varying, character varying, integer, text)
+    OWNER TO postgres;
